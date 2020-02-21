@@ -1,0 +1,1167 @@
+---
+title: "MSM paper"
+author: "Nicole Watson"
+date: "10/07/2019"
+output: pdf_document
+---
+
+# 1. Libraries and set up
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(haven)
+library(tidyverse)
+library(ggplot2)
+library(scales)
+library(psych)
+library(xtable)
+library(likert)
+library(RVAideMemoire)
+library(stargazer)
+library(ISLR)
+library(ggExtra)
+library(broom)
+```
+
+# 2. Data cleaning
+
+## 2.1. Reading in data 
+
+```{r}
+UCL_Poll <- read_sav("UCL_Poll.sav")
+
+#Variable indicating which experiment participants were assigned to 
+UCL_Poll$experiment <- ifelse(UCL_Poll$q3used == 1 | UCL_Poll$q3used == 2 | UCL_Poll$q3used == 3 | UCL_Poll$q3used == 4, "Ex 1", "Ex 2")
+```
+
+## 2.2. Recoding/creating variables 
+### All data: Recoding demographic variables used in analysis
+
+```{r}
+
+#recoding tenure to categorical 
+
+UCL_Poll$tenure<- ifelse(UCL_Poll$demogs_house == 1 | UCL_Poll$demogs_house == 2, "Owner", 
+                           ifelse(UCL_Poll$demogs_house == 5, "Private rent",
+                                  ifelse(UCL_Poll$demogs_house == 3 | UCL_Poll$demogs_house == 4, "Social rent",
+                                         ifelse(UCL_Poll$demogs_house == 6, "Rent free", "broken"))))
+
+#recoding education to categorical  
+
+UCL_Poll$education <- ifelse(UCL_Poll$demogs_education == 1, "None", ifelse(UCL_Poll$demogs_education == 2, "Primary",  ifelse(UCL_Poll$demogs_education == 3, "Secondary",  ifelse(UCL_Poll$demogs_education == 4, "Degree",  ifelse(UCL_Poll$demogs_education == 5, "Higher degree",  ifelse(UCL_Poll$demogs_education == 6, "Still full time",  ifelse(UCL_Poll$demogs_education == 7 |  UCL_Poll$demogs_education == 8, NA, "broken")))))))
+
+#coverting to factor so that baseline category = none in regression 
+UCL_Poll$education <- factor(UCL_Poll$education, order = FALSE, levels = c("None", "Still full time", "Primary", "Secondary", "Degree", "Higher degree"))
+
+# Created reduced education variable 
+
+UCL_Poll$education_reduced <- ifelse(UCL_Poll$education == "None" | UCL_Poll$education == "Primary" | UCL_Poll$education == "Still full time", "None", ifelse(UCL_Poll$education == "Secondary", "Secondary", ifelse(UCL_Poll$education == "Degree" | UCL_Poll$education == "Higher degree", "Degree or higher", ifelse(is.na(UCL_Poll$education), NA, "broken"))))
+
+#coverting to factor so that baseline category = none in regression 
+UCL_Poll$education_reduced <- factor(UCL_Poll$education_reduced, order = FALSE, levels = c("None", "Secondary", "Degree or higher"))
+
+#convert gender to dummy for regression analysis (male=1)
+
+UCL_Poll$gender <- ifelse(UCL_Poll$demogs_gender == 1, 1, 0)
+UCL_Poll$gender <- factor(UCL_Poll$gender)
+
+#convert income to factor and recoding as 3 level categorical 
+#removing refusals 
+
+UCL_Poll$income <- ifelse(UCL_Poll$demogs_income == 1 | UCL_Poll$demogs_income == 2 | UCL_Poll$demogs_income == 3, 1,
+                          ifelse(UCL_Poll$demogs_income == 4 | UCL_Poll$demogs_income == 5 | UCL_Poll$demogs_income == 6, 2, ifelse(UCL_Poll$demogs_income == 14, NA, 3)))
+
+
+UCL_Poll$income <- factor(UCL_Poll$income)
+table(UCL_Poll$income)
+
+#Moved house as dummy 
+#exclude DKs 
+
+UCL_Poll <- UCL_Poll %>%
+    mutate_at(vars(q9), na_if, 3)
+
+UCL_Poll$moved <- ifelse(UCL_Poll$q9 == 1, 1, 0)
+
+
+```
+
+### All data: Loss aversion variable
+```{r}
+
+# Coding loss aversion on 4 point scale indicating number of net positive gambles rejected
+# Loss_0n is a recoding of q11 - if participant made an 'economically rational' decision = 0, loss averse = 1
+
+
+UCL_Poll$Loss_01 <- ifelse(UCL_Poll$q11_01 == 2, 1, 0)
+UCL_Poll$Loss_02 <- ifelse(UCL_Poll$q11_02 == 2, 1, 0)
+UCL_Poll$Loss_03 <- ifelse(UCL_Poll$q11_03 == 2, 1, 0)
+UCL_Poll$Loss_04 <- ifelse(UCL_Poll$q11_04 == 2, 1, 0)
+
+#loss aversion measure (5 point scale: 0 = no loss avesion, 4 = extremely loss averse)
+
+UCL_Poll <- UCL_Poll %>%
+  mutate(lossaversion = Loss_01 + Loss_02 + Loss_03 + Loss_04)
+
+# binary loss aversion measure for robustness tests 
+
+UCL_Poll$lossaversion_binary <- ifelse(UCL_Poll$Loss_01 == 1 | UCL_Poll$Loss_02 == 1 | UCL_Poll$Loss_03 == 1 | UCL_Poll$Loss_04 == 1, 1, 0)
+
+```
+
+### All data: Switched supplier and/or tariff 
+
+```{r}
+#Categorical variable indicating whether participant has switched supplier and/or tariff 
+
+UCL_Poll$Tariff_or_supplier_switch <- ifelse(UCL_Poll$q7_01 == 5 | UCL_Poll$q7_02 == 5, "Don't know", ifelse(UCL_Poll$q7_01 == 4 | UCL_Poll$q7_02 == 4, "Never", ifelse(UCL_Poll$q7_01 == 3 | UCL_Poll$q7_02 == 3, "More than 12 months", ifelse(UCL_Poll$q7_01 == 2 | UCL_Poll$q7_02 == 2, "12 months", ifelse(UCL_Poll$q7_01 == 1 | UCL_Poll$q7_02 == 1, "3 months", "broken"))) ))
+
+UCL_Poll$Tariff_or_supplier_switch <- factor(UCL_Poll$Tariff_or_supplier_switch, order = FALSE, levels = c("Never", "Don't know", "More than 12 months", "12 months", "3 months"))
+
+```
+
+
+### Split data set into the two experiments 
+
+```{r}
+Ex1 <- UCL_Poll %>%
+  filter(experiment == "Ex 1")
+
+Ex2 <- UCL_Poll %>%
+  filter(experiment == "Ex 2")
+```
+
+### Answer to scenario as single variable  
+
+```{r}
+
+#Nested ifelse functions to create a variable indicating which supplier model was chosen  (note: "broken" level included for debugging purposes, to check that nothing has been missed out)
+
+##Ex 1 
+Ex1$chosen <- ifelse((Ex1$q3used == 1 & Ex1$q3_1a == 1 ) | (Ex1$q3used == 2 & Ex1$q3_1b == 2) | ( Ex1$q3used == 3 & Ex1$q3_1ca == 1 ) | (Ex1$q3used == 4 & Ex1$q3_1cb == 2), "Single",
+                     ifelse((Ex1$q3used == 1 & Ex1$q3_1a == 2 ) | (Ex1$q3used == 2 & Ex1$q3_1b == 1 ) | (Ex1$q3used == 3 & Ex1$q3_1ca == 2 ) | (Ex1$q3used == 4 & Ex1$q3_1cb == 1) , "Combined", "Broken"))
+
+  
+##Ex 2 
+Ex2$chosen <- ifelse((Ex2$q3used == 5 & Ex2$q3_2a == 1) | (Ex2$q3used == 6 & Ex2$q3_2b == 1), "Current",
+                     ifelse(Ex2$q3used == 5 & Ex2$q3_2a == 2, "Local", ifelse(Ex2$q3used == 6 & Ex2$q3_2b == 2, "Combined", "Broken")))
+
+
+```
+
+### Creating text variable indicating experimental group for clarity
+```{r}
+
+#Ex 1 - active choice groups combined
+
+Ex1$group <- ifelse(Ex1$q3used == 1, "Single default", ifelse(Ex1$q3used == 2, "Combined default", ifelse(Ex1$q3used == 3 | Ex1$q3used == 4 , "Active choice", 0)))
+
+#Ex1 with separate active choice groups (used later for checking differences between AC groups)
+
+#Ex2 
+
+Ex2$group <- ifelse(Ex2$q3used == 5, "Local", ifelse(Ex2$q3used == 6, "Combined", 0))
+
+```
+
+### Number of manipulation checks answered correctly 
+```{r} 
+
+#Creates new variables (m1:m5) indicating whether each manipulation check was answered correctly - this will be used for seeing if any manipulation checks need to be excluded ; 1=correct answer 
+
+#Ex 1 (text variable used here due to coding issues occuring when "q3used" was used)
+
+Ex1$m1 <- ifelse((Ex1$group == "Single default" & Ex1$q6_v1a_01 == 2) | (Ex1$group == "Combined default" & Ex1$q6_v1b_01 == 1) | (Ex1$group == "Active choice" & Ex1$q6_v1c_01 == 2), 1, 0)
+Ex1$m2 <- ifelse((Ex1$group == "Single default"& Ex1$q6_v1a_02 == 1) | (Ex1$group == "Combined default" & Ex1$q6_v1b_02 == 1) | (Ex1$group == "Active choice" & Ex1$q6_v1c_02 == 1), 1, 0)
+Ex1$m3 <- ifelse((Ex1$group == "Single default"& Ex1$q6_v1a_03 == 1) | (Ex1$group == "Combined default" & Ex1$q6_v1b_03 == 1) | (Ex1$group == "Active choice" & Ex1$q6_v1c_03 == 1), 1, 0)
+Ex1$m4 <- ifelse((Ex1$group == "Single default"& Ex1$q6_v1a_04 == 1) | (Ex1$group == "Combined default" & Ex1$q6_v1b_04 == 1) | (Ex1$group == "Active choice" & Ex1$q6_v1c_04 == 1), 1, 0)
+Ex1$m5 <- ifelse((Ex1$group == "Single default"& Ex1$q6_v1a_05 == 1 ) | (Ex1$group == "Combined default" & Ex1$q6_v1b_05 == 1) | (Ex1$group == "Active choice" & Ex1$q6_v1c_05 == 1), 1, 0) 
+
+#Ex 2 
+
+Ex2$m1 <- ifelse((Ex2$q3used == 5 & Ex2$q6_v2a_01 == 1) | (Ex2$q3used == 6 & Ex2$q6_v2b_01 == 1), 1, 0)
+Ex2$m2 <- ifelse((Ex2$q3used == 5 & Ex2$q6_v2a_02 == 2) | (Ex2$q3used == 6 & Ex2$q6_v2b_02 == 2), 1, 0)
+Ex2$m3 <- ifelse((Ex2$q3used == 5 & Ex2$q6_v2a_03 == 1) | (Ex2$q3used == 6 & Ex2$q6_v2b_03 == 1), 1, 0)
+Ex2$m4 <- ifelse((Ex2$q3used == 5 & Ex2$q6_v2a_04 == 1) | (Ex2$q3used == 6 & Ex2$q6_v2b_04 == 1), 1, 0)
+Ex2$m5 <- ifelse((Ex2$q3used == 5 & Ex2$q6_v2a_05 == 1) | (Ex2$q3used == 6 & Ex2$q6_v2b_05 == 1), 1, 0)
+
+
+#adds up total score - this will be used for participant exclusions - "Score" variable created
+Ex1 <- Ex1 %>%
+  mutate(Score = m1+m2+m3+m4+m5)
+
+Ex2 <- Ex2 %>%
+  mutate(Score = m1+m2+m3+m4+m5)
+
+
+#Create variable indicating low score for filtering (Lowscore =1, participant got less than 3 (i.e <50%) correct; Noscore =1, participant got none correct)
+
+Ex1$Lowscore <- ifelse(Ex1$Score <3, 1, 0)
+Ex2$Lowscore <- ifelse(Ex2$Score <3, 1, 0)
+
+Ex1$Noscore <- ifelse(Ex1$Score == 0, 1, 0)
+Ex2$Noscore <- ifelse(Ex2$Score == 0, 1, 0)
+
+```
+
+### Creation of 'default' variable to indicate whether the participant chose the default or alternative option 
+```{r}
+
+#Dummy indicating assignment to single supplier - used for regression analysis
+
+Ex1$Single <- ifelse(Ex1$group == "Single default", 1, 0)
+
+#switched = 1, participant chose the alternative rather than the default option - used for regression analysis 
+
+Ex1$switched <- ifelse(Ex1$group == "Single default" & Ex1$chosen == "Single" | Ex1$group == "Combined default" & Ex1$chosen == "Combined", 0, ifelse(Ex1$group == "Active choice", NA, 1))
+
+#Ex 2 
+Ex2$Combined <- ifelse(Ex2$group == "Combined", 1, 0) # dummy variable indicating assigment to combined supplier default, used for regression analysis 
+Ex2$switched <- ifelse(Ex2$chosen == "Current", 0, 1)
+
+```
+
+
+### Time exclusion - edit: this is not used as time measure not used for cognitive effort 
+```{r}
+#Calculate max and min values for time-taken and variable for exclusion (1=too long to include, 0=fine)
+
+##Ex 1
+timeSD1 <- sd(Ex1$timetaken)
+timeMEAN1 <- mean(Ex1$timetaken)
+timeMax1 <- timeMEAN1 + 3*(timeSD1)
+
+
+Ex1$time_exclusion <- ifelse(Ex1$timetaken > timeMax1, 1, 0)
+
+#Ex 2
+timeSD2 <- sd(Ex2$timetaken)
+timeMEAN2 <- mean(Ex2$timetaken)
+timeMax2 <- timeMEAN2 + 3*(timeSD2)
+
+
+Ex2$time_exclusion <- ifelse(Ex2$timetaken > timeMax2, 1, 0)
+
+
+
+rm(timeMEAN1)
+rm(timeMEAN2)
+rm(timeSD1)
+rm(timeSD2)
+rm(timeMax1)
+rm(timeMax2)
+
+```
+
+### Implied endorsement - removing 'DK' and recoding  
+```{r}
+#Changing 'don't know' to NA and recoding - higher number = stronger feeling of implied endorsement 
+
+library(plyr)
+Ex1$q4_05 <- as.character(Ex1$q4_05)
+Ex1$q4_05 <- mapvalues(Ex1$q4_05, from = c("1", "2", "3", "4", "5", "6"), to = c("5", "4", "3", "2", "1", "DK"))
+Ex1$q4_05 <- as.numeric(Ex1$q4_05)
+
+```
+
+
+### Cognitive effort variable 
+####Recoding 
+```{r}
+
+
+#In orginal coding, higher number = less effort, except for q3 which is reverse coded. All items except q3 reverse coded, so that now higher number = more cognitive effort 
+
+#reverse coding all except q3
+
+#EX1 
+Ex1$q5_01 <- as.character(Ex1$q5_01)
+Ex1$q5_01 <- mapvalues(Ex1$q5_01, from = c("1", "2", "3", "4", "5", "6"), to = c("5", "4", "3", "2", "1", "DK"))
+Ex1$q5_01 <- as.numeric(Ex1$q5_01)
+
+Ex1$q5_02 <- as.character(Ex1$q5_02)
+Ex1$q5_02 <- mapvalues(Ex1$q5_02, from = c("1", "2", "3", "4", "5", "6"), to = c("5", "4", "3", "2", "1", "DK"))
+Ex1$q5_02 <- as.numeric(Ex1$q5_02)
+
+Ex1$q5_04 <- as.character(Ex1$q5_04)
+Ex1$q5_04 <- mapvalues(Ex1$q5_04, from = c("1", "2", "3", "4", "5", "6"), to = c("5", "4", "3", "2", "1", "DK"))
+Ex1$q5_04 <- as.numeric(Ex1$q5_04)
+
+Ex1$q5_05 <- as.character(Ex1$q5_05)
+Ex1$q5_05 <- mapvalues(Ex1$q5_05, from = c("1", "2", "3", "4", "5", "6"), to = c("5", "4", "3", "2", "1", "DK"))
+Ex1$q5_05 <- as.numeric(Ex1$q5_05)
+
+#EX2 
+
+Ex2$q5_01 <- as.character(Ex2$q5_01)
+Ex2$q5_01 <- mapvalues(Ex2$q5_01, from = c("1", "2", "3", "4", "5", "6"), to = c("5", "4", "3", "2", "1", "DK"))
+Ex2$q5_01 <- as.numeric(Ex2$q5_01)
+
+Ex2$q5_02 <- as.character(Ex2$q5_02)
+Ex2$q5_02 <- mapvalues(Ex2$q5_02, from = c("1", "2", "3", "4", "5", "6"), to = c("5", "4", "3", "2", "1", "DK"))
+Ex2$q5_02 <- as.numeric(Ex2$q5_02)
+
+Ex2$q5_04 <- as.character(Ex2$q5_04)
+Ex2$q5_04 <- mapvalues(Ex2$q5_04, from = c("1", "2", "3", "4", "5", "6"), to = c("5", "4", "3", "2", "1", "DK"))
+Ex2$q5_04 <- as.numeric(Ex2$q5_04)
+
+Ex2$q5_05 <- as.character(Ex2$q5_05)
+Ex2$q5_05 <- mapvalues(Ex2$q5_05, from = c("1", "2", "3", "4", "5", "6"), to = c("5", "4", "3", "2", "1", "DK"))
+Ex2$q5_05 <- as.numeric(Ex2$q5_05)
+
+detach("package:plyr")
+library(dplyr)
+
+#turning q3 "don't knows" to NAs
+Ex1 <- Ex1 %>%
+    mutate_at(vars(q5_03), na_if, 6)
+
+
+Ex2 <- Ex2 %>%
+    mutate_at(vars(q5_03), na_if, 6)
+
+#creating subset of cognitive effort variables 
+
+cognitive_effort_ex1 <- Ex1 %>%
+ select(q5_01, q5_02, q5_03, q5_04, q5_05)
+
+cognitive_effort_ex2 <- Ex2 %>%
+ select(q5_01, q5_02, q5_03, q5_04, q5_05)
+
+```
+
+####NO NEED TO RUN: Chronbach's alpha analysis to check for internal consistency
+
+```{r}
+#
+#
+#psych::alpha(cognitive_effort_ex1, check.keys = TRUE)
+#psych::alpha(cognitive_effort_ex1)$total$std.alpha
+#
+##dropping item 5
+#cognitive_effort_ex1 <- Ex1 %>%
+# select(q5_01, q5_02, q5_03, q5_04)
+#
+#psych::alpha(cognitive_effort_ex1)
+#psych::alpha(cognitive_effort_ex1)$total$std.alpha
+#
+##e2
+#
+#psych::alpha(cognitive_effort_ex2)
+#psych::alpha(cognitive_effort_ex2)$total$std.alpha
+#
+#
+##dropping item 5
+#cognitive_effort_ex2 <- Ex2 %>%
+# select(q5_01, q5_02, q5_03, q5_04)
+#
+#
+#psych::alpha(cognitive_effort_ex2, check.keys = TRUE)
+#psych::alpha(cognitive_effort_ex2)$total$std.alpha
+```
+
+####Creating cognitive effort variable 
+```{r}
+#create self report variable (mean average of self reports, excluding NAs) 
+
+select_vars_quo <- quo(c(q5_01, q5_02, q5_03, q5_04))
+
+Ex1 <- Ex1 %>% 
+  rowwise() %>% 
+  mutate(Selfcog = mean(!!select_vars_quo, na.rm = TRUE))
+
+Ex2 <- Ex2 %>% 
+  rowwise() %>% 
+  mutate(Selfcog = mean(!!select_vars_quo, na.rm = TRUE))
+
+#UCL_Poll%>%
+#  filter(q5_01 == 6 & q5_02 == 6 & q5_04 == 6  & q5_05 == 6) %>%
+#  select(q5_01, q5_02, q5_03, q5_04)
+#
+# 2% of dataset with all NAs on self reports 
+
+
+```
+
+#### Cognitive effort (time + self reports) - time variable not used due to poor correlation between time and self reports - RUN TO REMOVE SURPLUS OBJECTS
+```{r}
+## Removing participants with long times 
+
+#Ex1 <- Ex1 %>% 
+#  filter(time_exclusion==0)
+#
+#
+#Ex2 <- Ex2 %>% 
+#  filter(time_exclusion==0)
+#
+##ranked time variable 
+#
+#Ex1$timerank <- rank(Ex1$timetaken, ties.method="min")
+#Ex2$timerank <- rank(Ex2$timetaken, ties.method="min")
+#
+##ranked self reports variable 
+#
+###Removing NAs
+#
+#Ex1 <- Ex1 %>%
+#    mutate_at(vars(Selfcog), na_if, "NaN")
+#
+#Ex2 <- Ex2 %>%
+#    mutate_at(vars(Selfcog), na_if, "NaN")
+#
+#Ex1$Selfrank <- rank(Ex1$Selfcog, ties.method="min", na.last = "keep")
+#Ex2$Selfrank <- rank(Ex2$Selfcog, ties.method="min", na.last = "keep")
+#
+#
+##correlation between self reports ranks and time ranks
+#
+#cor.test(Ex1$timerank, Ex1$Selfcog, method = "spearman")
+#cor.test(Ex1$timerank, Ex1$Selfrank, method = "spearman")
+#cor.test(Ex1$timerank, Ex1$Score, method = "spearman")
+#cor.test(Ex1$Score, Ex1$Selfcog, method = "pearson")
+#
+#cor.test(Ex2$timerank, Ex2$Selfcog, method = "spearman")
+#cor.test(Ex2$timerank, Ex2$Selfrank, method = "spearman")
+#cor.test(Ex2$timerank, Ex2$Score, method = "spearman")
+#cor.test(Ex2$Score, Ex2$Selfcog, method = "pearson")
+#
+##Average rank (across self reports and time)
+#
+#cog_vars <- quo(c(timerank, Selfrank))
+#
+#Ex1 <- Ex1 %>%
+#  mutate(CogEffort = mean(!!cog_vars, na.rm = TRUE))
+#
+#Ex2 <- Ex2 %>%
+#  mutate(CogEffort = mean(!!cog_vars, na.rm = TRUE))
+#
+#Ex1 <- Ex1 %>%
+#  drop_na(Selfcog)
+#
+#Ex2 <- Ex2 %>%
+#  drop_na(Selfcog)
+#
+##Checking correlation with score 
+#
+#cor.test(Ex1$Score, Ex1$CogEffort, method = "pearson")
+#cor.test(Ex2$Score, Ex2$CogEffort, method = "pearson")
+#
+#
+#rm(cog_vars)
+rm(select_vars_quo)
+#
+
+
+```
+
+
+
+## 2.3. Checks
+
+###Checking for ordering effects in group 1c and combining groups 
+No evidence of ordering effects so group 1c can be treated as a single group 
+
+```{r}
+ #group1c <- Ex1 %>%
+ #  filter(q3used == 3 | q3used == 4) %>%
+ #  select(q3used, chosen)
+ 
+# chisq.test(group1c$q3used, group1c$chosen)
+# 
+# rm(group1c)
+```
+
+
+## 2.4. Clean data set 
+```{r}
+
+
+#Filter for NAs on cognitive effort self reports and implied endorsement (implied endorsement = Ex1 only)
+
+Ex1_clean <- Ex1 %>%
+  drop_na(Selfcog, q4_05) #6.5% excluded 
+
+Ex2_clean <- Ex2 %>%
+  drop_na(Selfcog) #2.1% excluded 
+
+
+#Filter for low score on manipulation checks 
+
+Ex1_clean <- Ex1_clean %>%
+  filter(Lowscore == 0) #6.9% excluded 
+
+
+Ex2_clean <- Ex2_clean %>%
+  filter(Lowscore == 0) #8.9% excluded 
+
+#Total exclusions: 
+#Ex 1 = 13.5%
+#Ex 2 = 11% 
+
+#test for balance of attrition between groups 
+
+Ex1$attrition <- ifelse(Ex1$Lowscore == 1 | is.na(Ex1$Selfcog) | is.na(Ex1$q4_05), 1, 0)
+
+Ex2$attrition <- ifelse(Ex2$Lowscore == 1 | is.na(Ex2$Selfcog), 1, 0)
+
+chisq.test(Ex1$attrition, Ex1$group)
+chisq.test(Ex2$attrition, Ex2$group)
+
+#no significant difference in dropped participants between groups 
+
+
+
+###Significance tests for differences in core predictors and covariates with cleaned data 
+
+#Ex 2
+#no significant differences
+
+#t.test(Ex2_clean$lossaversion~Ex2_clean$group)  
+#chisq.test(Ex2_clean$demogs_education,Ex2_clean$group)
+#t.test(Ex2_clean$demogs_income~Ex2_clean$group)
+#chisq.test(Ex2_clean$Bigsix, Ex2_clean$group)
+#chisq.test(Ex2_clean$demogs_house, Ex2_clean$group)
+#t.test(Ex2_clean$actual_age~Ex2_clean$group)
+#t.test(Ex2_clean$timetaken~Ex2_clean$group)
+#t.test(Ex2_clean$Selfcog~Ex2_clean$group)
+
+#Ex 1
+
+#Ex1default <- Ex1_clean %>%
+#  filter(group!="Active choice")
+
+#t.test(Ex1default$lossaversion~Ex1default$group)  
+#chisq.test(Ex1default$demogs_education,Ex1default$group)
+#t.test(Ex1default$demogs_income~Ex1default$group)
+#chisq.test(Ex1default$Bigsix, Ex1default$group)
+#chisq.test(Ex1default$demogs_house, Ex1default$group)
+#t.test(Ex1default$actual_age~Ex1default$group)
+#t.test(Ex1default$timetaken~Ex1default$group)
+
+## Betweeen Ex1 & Ex2 
+#
+##chisq.test(UCL_Poll$demogs_education,UCL_Poll$experiment)
+##t.test(UCL_Poll$demogs_income~UCL_Poll$experiment)
+##chisq.test(UCL_Poll$demogs_house, UCL_Poll$exp#eriment)
+#t.test(UCL_Poll$actual_age~UCL_Poll$experiment)
+##t.test(UCL_Poll$timetaken~UCL_Poll$experiment#)
+#
+
+
+#Drop variables that are not being used 
+
+Ex1_clean <- Ex1_clean %>%
+  select(-c(q3_1a, q3_1b, q3_1ca, q3_1cb, q3_2a, q3_2b, q5_01, q5_02, q5_03, q5_04, q5_05, m1, m2, m3, m4, m5, q6_v1a_01, q6_v1a_02, q6_v1a_03, q6_v1a_04, q6_v1a_05, q6_v1b_01, q6_v1b_02, q6_v1b_03, q6_v1b_04, q6_v1b_05, q6_v1c_01, q6_v1c_02, q6_v1c_03, q6_v1c_04, q6_v1c_05, q6_v2a_01, q6_v2a_02, q6_v2a_03, q6_v2a_04, q6_v2a_05, q6_v2b_01, q6_v2b_02, q6_v2b_03, q6_v2b_04, q6_v2b_05, q11_01, q11_02, q11_03, q11_04, q11_05, q11_06, Loss_04, Loss_03, Loss_02, Loss_01, demogs_influencer, demogs_cars, demogs_children1, demogs_children2, demogs_children3, demogs_children4, demogs_children5, demogs_children6, demogs_disability1, demogs_disability2, demogs_disability3, demogs_disability4, demogs_disability5, demogs_disability6, demogs_ethnicity, demogs_marital, demogs_religion, demogs_responsible, demogs_itv, demogs_hols, demogs_occupation, demogs_status, Lowscore, Noscore, experiment))
+
+
+Ex2_clean <- Ex2_clean %>%
+  select(-c(q3_1a, q3_1b, q3_1ca, q3_1cb, q3_2a, q3_2b, q5_01, q5_02, q5_03, q5_04, q5_05, m1, m2, m3, m4, m5, q6_v1a_01, q6_v1a_02, q6_v1a_03, q6_v1a_04, q6_v1a_05, q6_v1b_01, q6_v1b_02, q6_v1b_03, q6_v1b_04, q6_v1b_05, q6_v1c_01, q6_v1c_02, q6_v1c_03, q6_v1c_04, q6_v1c_05, q6_v2a_01, q6_v2a_02, q6_v2a_03, q6_v2a_04, q6_v2a_05, q6_v2b_01, q6_v2b_02, q6_v2b_03, q6_v2b_04, q6_v2b_05, q11_01, q11_02, q11_03, q11_04, q11_05, q11_06, Loss_04, Loss_03, Loss_02, Loss_01, demogs_influencer, demogs_cars, demogs_children1, demogs_children2, demogs_children3, demogs_children4, demogs_children5, demogs_children6, demogs_disability1, demogs_disability2, demogs_disability3, demogs_disability4, demogs_disability5, demogs_disability6, demogs_ethnicity, demogs_marital, demogs_religion, demogs_responsible, demogs_itv, demogs_hols, demogs_occupation, demogs_status, Lowscore, Noscore, experiment))
+
+Ex1_clean <- Ex1_clean %>%
+  rename(Bill_responsible = q1,
+         Energy_supplier = q2,
+         Treatment = q3used,
+Reason_environment = q4_01,
+ Reason_easy = q4_02,
+ Reason_info = q4_03 ,
+  Reason_reliable = q4_04,
+  Endorsement = q4_05,
+  Reason_difficult = q4_06,
+    Supplier_switched =  q7_01 ,
+  Tariff_switched = q7_02,
+  Green_tariff = q8, 
+    Satisfaction = q10) 
+
+
+Ex2_clean <- Ex2_clean %>%
+  rename(Bill_responsible = q1,
+         Energy_supplier = q2,
+         Treatment = q3used,
+Reason_environment = q4_01,
+ Reason_easy = q4_02,
+ Reason_info = q4_03 ,
+  Reason_reliable = q4_04,
+  Reason_difficult = q4_06,
+    Supplier_switched =  q7_01 ,
+  Tariff_switched = q7_02,
+  Green_tariff = q8, 
+    Satisfaction = q10) 
+
+#'Ex1 default' subset (those assigned to a default in ex 1) - used in regression analysis 
+
+Ex1default <- Ex1_clean %>%
+  filter(group != "Active choice")
+
+```
+
+
+# 3. Analysis of Experiment 1 
+
+## H1 
+
+### Tables of suppliers chosen - for copying to LaTeX
+```{r}
+
+#Ex1 
+
+Ex1results <- table(Ex1_clean$group, Ex1_clean$chosen)
+xtable(Ex1results)
+
+rm(Ex1results)
+```
+
+### Visual representation 
+
+```{r}
+
+Ex1results <- Ex1_clean %>% 
+  group_by(group, chosen) %>% 
+  summarise(count=n()) %>% 
+  mutate(perc=count/sum(count))%>%
+  mutate(rounded=signif(perc*100, digits=3))
+
+  Ex1results$rounded <- paste(Ex1results$rounded,"%",  sep="")
+
+Ex1_h1_visual_1 <- ggplot(Ex1results, aes(x = factor(group), y = perc, fill = factor(chosen))) +
+  geom_bar(stat="identity", width = 0.7, position = "dodge") +
+  labs(x = " ", y = "Percentage of sample", fill = "Supplier model chosen:") +
+  theme_minimal(base_size = 14)+
+  theme_minimal()+
+  scale_fill_grey(name = "", labels = c("Added on local supplier in multiple supplier model", "Chose current tariff"))+
+  theme(legend.position="bottom")+
+  removeGridX()+
+     geom_text(aes(label=rounded), position=position_dodge(width=0.9), vjust=-0.25)+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1.0))+
+  scale_x_discrete(labels = str_wrap(c("Active choice", "Multiple supplier default (automatic enrollment to MSM)", "Single supplier default (opt in to MSM)"), width=25))
+  
+  
+#ggsave("Ex1_h1_visual_1.png")
+
+rm(Ex1_h1_visual)
+
+
+```
+
+
+
+###Chi squared tests
+
+```{r}
+
+#3X2 for all data
+all <- chisq.test(Ex1_clean$chosen, Ex1_clean$group)
+all$p.value
+
+#Pairwise  
+
+#Active choice and single supplier
+Ex1_AC_S <- Ex1_clean %>%
+  filter(group != "Combined default")
+
+AC_S <- chisq.test(Ex1_AC_S$chosen, Ex1_AC_S$group)
+
+
+
+#Active choice and combined supplier
+Ex1_AC_C <- Ex1_clean %>%
+  filter(group != "Single default")
+
+AC_C <- chisq.test(Ex1_AC_C$chosen, Ex1_AC_C$group)
+
+# Single and combined supplier
+
+Ex1_S_C <- Ex1_clean %>%
+  filter(group != "Active choice")
+
+S_C <- chisq.test(Ex1_S_C$chosen, Ex1_S_C$group)
+
+
+rm(Ex1_AC_S)
+rm(Ex1_AC_C)
+rm(Ex1_S_C)
+rm(S_C)
+rm(AC_S)
+rm(AC_C)
+rm(all)
+rm(Ex1results)
+```
+
+
+## H2, H3, H4
+### Regression analysis 
+
+```{r}
+
+#logistic regression model with just treatment effect
+
+Treatment_model <- glm(formula = switched ~ Single, data = Ex1default, family = binomial())
+exp(cbind(OR = coef(Treatment_model), confint(Treatment_model)))
+
+#logistic regression model with just IVs (default mechanisms)
+
+Default_model <- glm(formula = switched ~ Single + Selfcog + Endorsement + lossaversion, data = Ex1default, family = binomial())
+exp(cbind(OR = coef(Default_model), confint(Default_model)))
+
+#logistic regression model with IVs + all covariates 
+
+
+All_covariate_model <- glm(formula = switched ~ Single + Selfcog + Endorsement + lossaversion + gender + demogs_age + education_reduced + moved + Satisfaction + Tariff_or_supplier_switch + income + tenure, data = Ex1default, family = binomial())
+
+exp(cbind(OR = coef(All_covariate_model), confint(All_covariate_model)))
+
+#Analysis with interaction terms (not pre-registered)
+
+#without covariates (not presented in paper)
+Explore_model_1 <- glm(formula = switched ~ Single + Selfcog + Endorsement + lossaversion + Single*Selfcog + Single*Endorsement + Single*lossaversion, data = Ex1default, family = binomial())
+
+#With covariates 
+Explore_model_2 <- glm(formula = switched ~ Single + Selfcog + Endorsement + lossaversion + Single*Selfcog + Single*Endorsement + Single*lossaversion + gender + demogs_age + education_reduced + tenure + moved + Satisfaction + Tariff_or_supplier_switch + income , data = Ex1default, family = binomial()) 
+
+exp(cbind(OR = coef(Explore_model_2), confint(Explore_model_2)))
+
+
+stargazer(Default_model, All_covariate_model, Explore_model_2, type = "text", font.size = "small", summary = TRUE, report=('vc*p'), omit = "Constant", header = FALSE,  column.sep.width = "0pt", single.row = FALSE, no.space = TRUE, digits =3)
+
+#Note: results in paper presented in odds ratios 
+
+
+
+rm(Default_model)
+rm(Switching_model)
+rm(Demographics_model)
+rm(All_covariate_model)
+rm(Explore_model_1)
+rm(Explore_model_2)
+
+```
+
+
+# 4. Analysis of Experiment 2
+
+## H1 
+
+### Tables of suppliers chosen - for copying to LaTeX
+
+```{r}
+Ex2results <- table(Ex2_clean$group, Ex2_clean$chosen)
+xtable(Ex2results)
+
+rm(Ex1results)
+```
+
+### Visual representation
+
+```{r}
+
+Ex2results <- Ex2 %>% 
+  group_by(group, switched) %>% 
+  summarise(count=n()) %>% 
+  mutate(perc=count/sum(count))%>%
+  mutate(rounded=signif(perc*100, digits=3))
+
+  Ex2results$rounded <- paste(Ex2results$rounded,"%",  sep="")
+
+
+pos <- c("Local", "Combined")
+Ex2_h1_visual <- ggplot(Ex2results, aes(x = factor(group), y = perc, fill = factor(switched))) +
+  geom_bar(stat="identity", width = 0.7, position = "dodge") +
+  labs(x = " ", y = "Percentage of sample", fill = "") +
+  theme_minimal(base_size = 14)+
+  theme_minimal()+
+  scale_fill_grey(name = "", labels = c("Stayed with current supplier", "Switched to/added on LocalEnergy"))+
+  scale_x_discrete(limits = pos, labels=c("Single supplier condition", "Multiple supplier condition"))+
+  theme(legend.position="bottom") +
+  removeGridX()+
+     geom_text(aes(label=rounded), position=position_dodge(width=0.9), vjust=-0.25)+
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1.0))
+  
+#ggsave("Ex2_h1_visual.png")
+
+rm(Ex2_h1_visual)
+
+```
+### Chi squared test 
+```{r}
+chisq.test(Ex2_clean$group, Ex2_clean$switched)
+```
+
+## H2 
+
+###Regression analysis 
+```{r}
+
+#Logistic regression model with just treatment effect (not shown in paper)
+
+Treatment_model <- glm(formula = switched ~ Combined, data = Ex2_clean, family = binomial())
+exp(cbind(OR = coef(Treatment_model), confint(Treatment_model)))
+
+
+#Logistic regression model with treatment effect + covariates 
+
+Treatmentcontrol_model <- glm(formula = switched ~ Combined + lossaversion + Selfcog  + gender + demogs_age + education_reduced + tenure + moved + Satisfaction + Tariff_or_supplier_switch + income, data = Ex2_clean, family = binomial())
+exp(cbind(OR = coef(Treatmentcontrol_model), confint(Treatmentcontrol_model)))
+
+#Logistic regression model with treatment effect + covariates + interaction effects 
+
+All_covariate_model <- glm(formula = switched ~ Combined + lossaversion + Combined*lossaversion + Selfcog  + gender + demogs_age + education_reduced + tenure + moved + Satisfaction + Tariff_or_supplier_switch + income, data = Ex2_clean, family = binomial())
+exp(cbind(OR = coef(All_covariate_model), confint(All_covariate_model)))
+
+
+stargazer(Treatmentcontrol_model, All_covariate_model, type = "text", report=('vc*p'), font.size = "small", summary = TRUE, omit = "Constant", header = FALSE,  column.sep.width = "0pt", single.row = FALSE, no.space = TRUE, digits =3)
+
+
+
+```
+# 5. Sensitivity analysis (robustness checks )
+##5.1. Model specification - OLS models, Benjamini Hochberg correction for multiple hypotheses, regional fixed effects 
+
+###Ex1 
+
+```{r}
+
+#OLS model with just IVs
+
+Default_model_OLS <- lm(formula = switched ~ Single + Selfcog + Endorsement + lossaversion, data = Ex1default)
+
+#OLS model with IVs + all covariates 
+
+All_covariate_model_OLS <- lm(formula = switched ~ Single + Selfcog + Endorsement + lossaversion + gender + demogs_age + education_reduced + tenure + moved + Satisfaction + Tariff_or_supplier_switch + income, data = Ex1default)
+
+#OLS model with all covariates + interaction effects
+
+Explore_model_2_OLS <- lm(formula = switched ~ Single + Selfcog + Endorsement + lossaversion +  + Single*Selfcog + Single*Endorsement + Single*lossaversion + gender + demogs_age + education_reduced + tenure + moved + Satisfaction + Tariff_or_supplier_switch + income, data = Ex1default)
+
+#Logistic regression models with regional fixed effects 
+
+#All covatiates 
+
+All_covariate_model_r <- glm(formula = switched ~ Single + Selfcog + Endorsement + lossaversion + gender + demogs_age + education_reduced + tenure + moved + Satisfaction + Tariff_or_supplier_switch + income + factor(demogs_region), data = Ex1default, family = binomial())
+
+#All covariates + interaction effects 
+
+Explore_model_2_r <- glm(formula = switched ~ Single + Selfcog + Endorsement + lossaversion +  + Single*Selfcog + Single*Endorsement + Single*lossaversion + gender + demogs_age + education_reduced + tenure + moved + Satisfaction + Tariff_or_supplier_switch + income + factor(demogs_region), data = Ex1default, family = binomial())
+
+#For copying to LaTeX
+
+stargazer(Default_model_OLS, All_covariate_model_OLS, Explore_model_2_OLS, All_covariate_model_r, Explore_model_2_r , type = "text", report=('vc*p'),font.size = "small", summary = TRUE, omit = "Constant", header = FALSE,  column.sep.width = "0pt", single.row = TRUE, no.space = TRUE)
+
+
+# Benjamini Hochberg correction for multiple hypotheses  
+
+Explore_model_2_BH <- glm(formula = switched ~ Single + Selfcog + Endorsement + lossaversion + Single*Selfcog + Single*Endorsement + Single*lossaversion + gender + demogs_age + education_reduced + tenure + moved + Satisfaction + Tariff_or_supplier_switch + income, family=binomial, data = Ex1default)
+summary(Explore_model_2_BH)
+P_all <- summary(Explore_model_2_BH)$coefficients[, 4]
+P_all <- p.adjust(P_all, method = "BH", n =length(P_all))
+stargazer(Explore_model_2_BH, type = "text", summary = TRUE, p=list(P_all),omit = "Constant", header = FALSE,  column.sep.width = "0pt", single.row = TRUE, no.space = TRUE)
+```
+
+
+###Ex2
+```{r}
+
+#OLS model with just treatment effect
+Treatment_model_ols <- lm(formula = switched ~ Combined, data = Ex2_clean)
+
+#OLS model with all covariates 
+T_covariate_model_ols <- lm(formula = switched ~ Combined + lossaversion + Selfcog  + gender + demogs_age + education_reduced + tenure + moved + Satisfaction + Tariff_or_supplier_switch + income, data = Ex2_clean)
+
+#OLS model with all covariates + interaction effects 
+T_covariate_model_ols_interaction <- lm(formula = switched ~ Combined + lossaversion + Combined*lossaversion + Selfcog  + gender + demogs_age + education_reduced + tenure + moved + Satisfaction + Tariff_or_supplier_switch + income, data = Ex2_clean)
+
+# Logistic model with all covariates + regional fixed effects 
+
+T_covariate_model_re <- glm(formula = switched ~ Combined + lossaversion + Selfcog  + gender + demogs_age + education_reduced + tenure + moved + Satisfaction + Tariff_or_supplier_switch + income + factor(demogs_region), data = Ex2_clean, family = binomial())
+
+# Logistic model with all covariates + interaction effects +regional fixed effects 
+T_covariate_model_interaction_re <- glm(formula = switched ~ Combined + lossaversion + Combined*lossaversion + Selfcog  + gender + demogs_age + education_reduced + tenure + moved + Satisfaction + Tariff_or_supplier_switch + income + factor(demogs_region), data = Ex2_clean, family = binomial())
+
+
+stargazer(T_covariate_model_ols, T_covariate_model_ols_interaction, T_covariate_model_re, T_covariate_model_interaction_re, type = "text", report=('vc*p'), font.size = "small", summary = TRUE, dep.var.labels = "Switching to/adding Local energy supplier", omit = "Constant", header = FALSE,  column.sep.width = "0pt", single.row = TRUE, no.space = TRUE)
+```
+
+
+
+## 5.2. Robustness to exclusion criteria - no exclusions 
+
+###Ex 1: 
+```{r}
+
+#Supplier model chosen 
+
+Ex1results_excl <- Ex1 %>% 
+  group_by(group, chosen) %>% 
+  summarise(count=n()) %>% 
+  mutate(perc=count/sum(count))%>%
+  mutate(rounded=signif(perc*100, digits=3))
+
+  Ex1results_excl$rounded <- paste(Ex1results_excl$rounded,"%",  sep="")
+
+Ex1_h1_visual_1_excl <- ggplot(Ex1results_excl, aes(x = factor(group), y = perc, fill = factor(chosen))) +
+  geom_bar(stat="identity", width = 0.7, position = "dodge") +
+  labs(x = " ", y = "Percentage of sample", fill = "Supplier model chosen:") +
+  theme_minimal(base_size = 14)+
+  theme_minimal()+
+  scale_fill_grey(name = "", labels = c("Added on local supplier in multiple supplier model", "Chose current tariff"))+
+  theme(legend.position="bottom")+
+  removeGridX()+
+     geom_text(aes(label=rounded), position=position_dodge(width=0.9), vjust=-0.25)+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1.0))+
+  scale_x_discrete(labels = str_wrap(c("Active choice", "Multiple supplier default (automatic enrollment to MSM)", "Single supplier default (opt in to MSM)"), width=25))
+
+
+#ggsave("Ex1_h1_visual_1_excl.png")
+
+
+#Regression analysis 
+
+#Logistic model with just IVs
+
+Default_model_ex <- glm(formula = switched ~ Single + Selfcog + q4_05 + lossaversion, data = Ex1, family = binomial())
+
+#Logistic model with IVs + all covariates 
+
+All_covariate_model_ex <- glm(formula = switched ~ Single + Selfcog + q4_05 + lossaversion + gender + demogs_age + education_reduced + tenure + moved + q10 + Tariff_or_supplier_switch + income, data = Ex1, family = binomial())
+
+#Logistic model with interaction terms 
+
+Explore_model_2_ex <- glm(formula = switched ~ Single + Selfcog + q4_05 + lossaversion +  + Single*Selfcog + Single*q4_05 + Single*lossaversion + gender + demogs_age + education_reduced + tenure + moved + q10 + Tariff_or_supplier_switch + income , data = Ex1, family = binomial())
+
+
+stargazer(Default_model_ex, All_covariate_model_ex, Explore_model_2_ex, type = "text", font.size = "small", summary = TRUE, report=('vc*p'), omit = "Constant", header = FALSE,  column.sep.width = "0pt", single.row = FALSE, no.space = TRUE, digits =3)
+
+
+```
+
+#### Ex2
+
+
+```{r}
+
+#Supplier model chosen 
+
+Ex2results_excl <- Ex2 %>% 
+  group_by(group, switched) %>% 
+  summarise(count=n()) %>% 
+  mutate(perc=count/sum(count))%>%
+  mutate(rounded=signif(perc*100, digits=3))
+
+  Ex2results_excl$rounded <- paste(Ex2results_excl$rounded,"%",  sep="")
+
+
+pos <- c("Local", "Combined")
+Ex2_h1_visual_excl  <- ggplot(Ex2results_excl, aes(x = factor(group), y = perc, fill = factor(switched))) +
+  geom_bar(stat="identity", width = 0.7, position = "dodge") +
+  labs(x = " ", y = "Percentage of sample", fill = "") +
+  theme_minimal(base_size = 14)+
+  theme_minimal()+
+  scale_fill_grey(name = "", labels = c("Stayed with current supplier", "Switched to/added on LocalEnergy"))+
+  scale_x_discrete(limits = pos, labels=c("Single supplier condition", "Multiple supplier condition"))+
+  theme(legend.position="bottom") +
+  removeGridX()+
+     geom_text(aes(label=rounded), position=position_dodge(width=0.9), vjust=-0.25)+
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1.0))
+  
+#ggsave("Ex2_h1_visual_excl.png")
+
+#Regression analysis 
+
+Treatment_model <- glm(formula = switched ~ Combined, data = Ex2, family = binomial())
+
+#Logisitic regression model with all covariates 
+
+Treatmentcontrol_model_excl <- glm(formula = switched ~ Combined + lossaversion + Selfcog  + gender + demogs_age + education_reduced + tenure + moved + q10 + Tariff_or_supplier_switch + income, data = Ex2, family = binomial())
+
+#IVs + all covariates + interaction effects 
+
+All_covariate_model_excl <- glm(formula = switched ~ Combined + lossaversion + Combined*lossaversion + Selfcog  + gender + demogs_age + education_reduced + tenure + moved + q10 + Tariff_or_supplier_switch + income, data = Ex2, family = binomial())
+
+stargazer(Treatmentcontrol_model_excl, All_covariate_model_excl, type = "text", report=('vc*p'), font.size = "small", summary = TRUE, omit = "Constant", header = FALSE,  column.sep.width = "0pt", single.row = FALSE, no.space = TRUE, digits =3)
+  
+```
+
+
+
+
+
+
+# 6. Summary statistics 
+
+Covariates
+```{r}
+sum_stats_1 <- Ex1_clean %>%
+  select(education_reduced, gender, tenure, income, actual_age, moved, Satisfaction, Tariff_or_supplier_switch, lossaversion,  Endorsement)
+
+edu <- sum_stats_1 %>%
+  group_by(education_reduced) %>%
+ summarise (n=n()) %>%
+  mutate(rel.freq = paste0(round(100 * n/sum(n), 0), "%"))
+
+gen <- sum_stats_1 %>%
+  group_by(gender) %>%
+ summarise (n=n()) %>%
+  mutate(rel.freq = paste0(round(100 * n/sum(n), 0), "%"))
+
+ten <- sum_stats_1 %>%
+  group_by(tenure) %>%
+ summarise (n=n()) %>%
+  mutate(rel.freq = paste0(round(100 * n/sum(n), 0), "%"))
+
+inc <- sum_stats_1 %>%
+  group_by(income) %>%
+ summarise (n=n()) %>%
+  mutate(rel.freq = paste0(round(100 * n/sum(n), 0), "%"))
+
+moved <- sum_stats_1 %>%
+  group_by(moved) %>%
+ summarise (n=n()) %>%
+  mutate(rel.freq = paste0(round(100 * n/sum(n), 0), "%"))
+
+switch <- sum_stats_1 %>%
+  group_by(Tariff_or_supplier_switch) %>%
+ summarise (n=n()) %>%
+  mutate(rel.freq = paste0(round(100 * n/sum(n), 0), "%"))
+
+
+se <- function(x) sqrt(var(x)/length(x))
+
+
+sum_stats_2 <- Ex2_clean %>%
+  select(education_reduced, gender, tenure, income, actual_age, moved, Satisfaction, Tariff_or_supplier_switch, lossaversion)
+
+edu <- sum_stats_2 %>%
+  group_by(education_reduced) %>%
+ summarise (n=n()) %>%
+  mutate(rel.freq = paste0(round(100 * n/sum(n), 0), "%"))
+
+gen <- sum_stats_2 %>%
+  group_by(gender) %>%
+ summarise (n=n()) %>%
+  mutate(rel.freq = paste0(round(100 * n/sum(n), 0), "%"))
+
+ten <- sum_stats_2 %>%
+  group_by(tenure) %>%
+ summarise (n=n()) %>%
+  mutate(rel.freq = paste0(round(100 * n/sum(n), 0), "%"))
+
+inc <- sum_stats_2 %>%
+  group_by(income) %>%
+ summarise (n=n()) %>%
+  mutate(rel.freq = paste0(round(100 * n/sum(n), 0), "%"))
+
+moved <- sum_stats_2 %>%
+  group_by(moved) %>%
+ summarise (n=n()) %>%
+  mutate(rel.freq = paste0(round(100 * n/sum(n), 0), "%"))
+
+switch <- sum_stats_2 %>%
+  group_by(Tariff_or_supplier_switch) %>%
+ summarise (n=n()) %>%
+  mutate(rel.freq = paste0(round(100 * n/sum(n), 0), "%"))
+
+
+```
+
+Cognitive biases
+```{r}
+
+Lossresults <- UCL_Poll %>% 
+  group_by(lossaversion) %>% 
+  summarise(count=n()) %>% 
+  mutate(perc=count/sum(count))
+
+loss_plot <- ggplot(Lossresults, aes(x = factor(lossaversion), y = perc*100)) +
+  geom_bar(stat="identity", width = 0.7, position = "dodge") +
+  labs(x = "Loss aversion score", y = "Percentage of sample (%)") +
+  theme_minimal(base_size = 14)+
+  theme_minimal()+
+  theme(legend.position="bottom") +
+  removeGridX()
+
+ggsave("Figures/Lossaversion.png") 
+ 
+ Lossresults_ex <- UCL_Poll %>% 
+  group_by(experiment, lossaversion_binary) %>% 
+   summarise (n=n()) %>%
+  mutate(rel.freq = paste0(round(100 * n/sum(n), 0), "%"))
+ 
+ xtable(Lossresults_ex)
+ 
+
+```
+
+
+
+# 7. Extra analysis 
+
+##7.1. Coding loss aversion as binary (included in robustness checks in paper)
+
+###Ex1 
+
+```{r}
+
+#model with just treatment effect
+
+Treatment_model <- glm(formula = switched ~ Single, data = Ex1default, family = binomial())
+
+#model with just IVs
+
+Default_model_loss_binary_1 <- glm(formula = switched ~ Single + Selfcog + Endorsement + lossaversion_binary, data = Ex1default, family = binomial())
+
+#IVs + all covariates 
+
+All_covariate_model_loss_binary_1 <- glm(formula = switched ~ Single + Selfcog + Endorsement + lossaversion_binary + gender + demogs_age + education_reduced + tenure + moved + Satisfaction + Tariff_or_supplier_switch + income, data = Ex1default, family = binomial())
+
+# + interaction terms 
+
+Explore_model_2_loss_binary_1 <- glm(formula = switched ~ Single + Selfcog + Endorsement + lossaversion_binary +  + Single*Selfcog + Single*Endorsement + Single*lossaversion_binary + gender + demogs_age + education_reduced + tenure + moved + Satisfaction + Tariff_or_supplier_switch + income , data = Ex1default, family = binomial())
+
+
+stargazer(Default_model_loss_binary_1, All_covariate_model_loss_binary_1, Explore_model_2_loss_binary_1, type = "text",report=('vc*p'), font.size = "small", summary = TRUE, omit = "Constant", header = FALSE,  column.sep.width = "0pt", single.row = FALSE, no.space = TRUE, digits =3)
+
+```
+
+###Ex2
+
+```{r}
+
+#IVs + all covariates 
+
+Treatmentcontrol_model_lossbinary_2 <- glm(formula = switched ~ Combined + lossaversion_binary + Selfcog + gender + demogs_age + education_reduced + tenure + moved + Satisfaction + Tariff_or_supplier_switch + income, data = Ex2_clean, family = binomial())
+
+#IVs + all covariates + interaction effects
+
+All_covariate_modell_lossbinary_2 <- glm(formula = switched ~ Combined + lossaversion_binary + Combined*lossaversion_binary + Selfcog  + gender + demogs_age + education_reduced + tenure + moved + Satisfaction + Tariff_or_supplier_switch + income, data = Ex2_clean, family = binomial())
+
+
+stargazer(Treatmentcontrol_model_lossbinary_2, All_covariate_modell_lossbinary_2, type = "latex", report=('vc*p'), font.size = "small", summary = TRUE, omit = "Constant", header = FALSE,  column.sep.width = "0pt", single.row = FALSE, no.space = TRUE, digits =3)
+
+```
+
+
+## 7.2. Coding loss aversion as categorical (exploring effect of loss aversion)
+
+
+```{r}
+
+
+#model with just IVs
+
+Default_model_loss_cat <- glm(formula = switched ~ Single + Selfcog + Endorsement + as.factor(lossaversion), data = Ex1default, family = binomial())
+
+#IVs + all covariates 
+
+All_covariate_model_loss_cat <- glm(formula = switched ~ Single + Selfcog + Endorsement + as.factor(lossaversion) + gender + demogs_age + education_reduced + tenure + moved + Satisfaction + Tariff_or_supplier_switch + income, data = Ex1default, family = binomial())
+
+
+# + interaction terms 
+
+
+Explore_model_2_loss_cat <- glm(formula = switched ~ Single + Selfcog + Endorsement + as.factor(lossaversion) +  + Single*Selfcog + Single*Endorsement + Single*as.factor(lossaversion) + gender + demogs_age + education_reduced + tenure + moved + Satisfaction + Tariff_or_supplier_switch + income , data = Ex1default, family = binomial())
+
+stargazer(Default_model_loss_cat, All_covariate_model_loss_cat, Explore_model_2_loss_cat, type = "text", omit = "Constant", header = FALSE,  column.sep.width = "0pt", single.row = FALSE, no.space = TRUE, digits =3)
+
+```
+
